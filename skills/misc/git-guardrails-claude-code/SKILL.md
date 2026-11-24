@@ -5,17 +5,21 @@ description: Set up Claude Code hooks to block dangerous git commands (push, res
 
 # Setup Git Guardrails
 
-Sets up a PreToolUse hook that intercepts and blocks dangerous git commands before Claude executes them.
+Sets up a PreToolUse hook that intercepts and blocks dangerous git commands before Claude executes them, from both the Bash and PowerShell tools.
 
 ## What Gets Blocked
 
 - `git push` (all variants including `--force`)
-- `git reset --hard`
-- `git clean -f` / `git clean -fd`
+- `git reset --hard` (also shortened, like `--har`)
+- `git clean` with `-f` in any flag group (`-f`, `-fd`, `-xdf`) or `--force` (also shortened)
 - `git branch -D`
-- `git checkout .` / `git restore .`
+- `git checkout .` / `git checkout -- .` / `git restore .`
 
-When blocked, Claude sees a message telling it that it does not have authority to access these commands.
+Before matching, the hook reads `git.exe` as `git`, joins `\` line continuations, squeezes whitespace, and drops git's global options (`-C`, `-c`, `--git-dir`, `--work-tree`, `--namespace`, `--no-pager` and the like, quoted values included). When blocked, Claude sees a message telling it that it does not have authority to access these commands.
+
+The hook fails closed: when `jq` is missing, the input won't parse, or a pattern is invalid, it blocks every command with a message saying why.
+
+It guards against accidents, not a determined agent: an alias, a script, `sh -c`, or any spelling not listed above still gets past it. Tell the user that, and that branch protection on the server is what really stops a push to an important branch.
 
 ## Steps
 
@@ -45,7 +49,7 @@ Add to the appropriate settings file:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -65,7 +69,7 @@ Add to the appropriate settings file:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -82,14 +86,15 @@ If the settings file already exists, merge the hook into the existing `hooks.Pre
 
 ### 4. Ask about customization
 
-Ask if user wants to add or remove any patterns from the blocked list. Edit the copied script accordingly.
+Ask if user wants to add or remove any patterns from the blocked list. Edit the copied script accordingly. Patterns are extended regular expressions matched against the normalized command, so an unbalanced `(` blocks everything: the step 5 test catches it.
 
 ### 5. Verify
 
 Run a quick test:
 
 ```bash
-echo '{"tool_input":{"command":"git push origin main"}}' | <path-to-script>
+echo '{"tool_input":{"command":"git -C . push origin main"}}' | <path-to-script>; echo "exit $?"
+echo '{"tool_input":{"command":"git status"}}' | <path-to-script>; echo "exit $?"
 ```
 
-Should exit with code 2 and print a BLOCKED message to stderr.
+The first should exit with code 2 and print a BLOCKED message to stderr; the second should exit 0. If both exit 2 with "Is jq installed?", install `jq` first.
