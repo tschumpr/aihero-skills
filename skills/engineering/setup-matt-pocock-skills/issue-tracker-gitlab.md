@@ -4,12 +4,14 @@ Issues and specs for this repo live as GitLab issues. Use the [`glab`](https://g
 
 ## Conventions
 
-- **Create an issue**: `glab issue create --title "..." --description "..."`. Use a heredoc for multi-line descriptions. Pass `--description -` to open an editor.
+- **Pass text safely**: never type issue or MR text into a shell command, quoted or not. It is markdown full of backticks, `$(...)`, quotes and apostrophes, and any of them can break out of the quoting and run as a command. Write the title and the description or note to temp files with your file-writing tool, then pass each as `"$(cat <file>)"`: the shell doesn't re-read what that returns.
+- **Quote outside text as a blockquote**: when a note or description repeats text from a reporter or an MR, put `> ` at the start of every line of it. GitLab runs a line that starts with `/` as a quick action (`/merge`, `/approve`, `/close`) with your permissions, and a blockquote line never starts with `/`.
+- **Create an issue**: `glab issue create --title "$(cat <title-file>)" --description "$(cat <description-file>)"`. Pass `--description -` to open an editor.
 - **Read an issue**: `glab issue view <number> --comments`. Use `-F json` for machine-readable output.
 - **List issues**: `glab issue list -O json` with appropriate `--label` filters.
-- **Comment on an issue**: `glab issue note <number> --message "..."`. GitLab calls comments "notes".
+- **Comment on an issue**: `glab issue note <number> --message "$(cat <note-file>)"`. GitLab calls comments "notes".
 - **Apply / remove labels**: `glab issue update <number> --label "..."` / `--unlabel "..."`. Multiple labels can be comma-separated or by repeating the flag.
-- **Close**: `glab issue close <number>`. `glab issue close` does not accept a closing comment, so post the explanation first with `glab issue note <number> --message "..."`, then close.
+- **Close**: `glab issue close <number>`. `glab issue close` does not accept a closing comment, so post the explanation first as a note (see **Comment on an issue**), then close.
 - **Merge requests**: GitLab calls PRs "merge requests". Use `glab mr create`, `glab mr view`, `glab mr note`, etc., the same shape as `gh pr ...` with `mr` in place of `pr` and `note`/`--message` in place of `comment`/`--body`.
 
 Infer the repo from `git remote -v`; `glab` does this automatically when run inside a clone.
@@ -43,4 +45,4 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Blocking**: GitLab's **native blocking link**, the canonical, UI-visible representation. Add it with the `/blocked_by #<n>` quick action, posted as a note (`glab issue note <child> --message "/blocked_by #<blocker>"`). Native blocking links are a Premium/Ultimate feature; on the free tier (or where unavailable) fall back to a `Blocked by: #<n>, #<n>` line at the top of the description. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: list the map's children with `glab api projects/:id/issues/<map>/links`, keeping open issues that carry a `wayfinder:<type>` label; drop any with an open blocker: a native `blocked_by` link to an open issue (`glab api projects/:id/issues/<child-iid>/links`), or an open issue in the `Blocked by` line, or an assignee; first in map order wins.
 - **Claim**: `glab issue update <n> --assignee @me`, the session's first write.
-- **Resolve**: `glab issue note <n> --message "<answer>"`, then `glab issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Resolve**: post the answer as a note (see **Comment on an issue**), then `glab issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
