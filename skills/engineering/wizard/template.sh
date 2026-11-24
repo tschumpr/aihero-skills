@@ -93,7 +93,7 @@ confirm() {
 # quotes or a plain dotenv double-quoted value undone.
 _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
-  local line value sq="'\\''"; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
+  local line value sq="'\\''"; line=$(LC_ALL=C grep -aE "^${1}=" "$ENV_FILE" | tail -n1) || return 1
   value="${line#*=}"
   if [[ "$value" == \'*\' ]]; then value="${value:1:${#value}-2}"; value="${value//"$sq"/\'}"
   elif [[ "$value" == \"*\" ]]; then
@@ -134,17 +134,47 @@ ask_secret() {
   printf -v "$key" '%s' "$input"
 }
 
+# _abort "msg" stops the wizard. It exits rather than returns, so it holds even
+# where a caller's `||` or `if` would switch off set -e.
+_abort() { warn "$1"; exit 1; }
+
+# _refuse_committable_env stops before a value lands in a file git would commit.
+# It checks where the write really lands (a symlink's target, from its own
+# directory), and on a git error it refuses unless no repo encloses that file.
+_refuse_committable_env() {
+  local target=$ENV_FILE dir d rc=0
+  if [[ -L "$target" ]]; then
+    target=$(readlink -f "$target") || _abort "can't resolve the symlink $ENV_FILE."
+  fi
+  dir=$(dirname "$target")
+  git -C "$dir" check-ignore -q -- "$(basename "$target")" 2>/dev/null || rc=$?
+  case $rc in
+    0|127) return 0 ;; # ignored, or git isn't installed
+    1) ;;              # in a repo and not ignored (a tracked file never is)
+    *) d=$(cd "$dir" 2>/dev/null && pwd -P) || return 0
+       while [[ ! -e "$d/.git" ]]; do [[ "$d" == / ]] && return 0; d=$(dirname "$d"); done ;;
+  esac
+  _abort "git would commit $target (or can't tell). Ignore it in .gitignore, run git rm --cached on it if it's tracked, then re-run."
+}
+
 # write_env KEY VALUE upserts KEY='VALUE' into ENV_FILE (replaces any existing
 # line) and sets $KEY. Idempotent. Creates ENV_FILE at mode 0600; writes through
-# a symlink and keeps an existing file's mode.
+# a symlink and keeps an existing file's mode. Rewrites in memory, so no copy of
+# the secrets lands in a temp file, and stops before truncating a file it can't read whole.
 write_env() {
-  local key="$1" value="$2" tmp sq="'\\''"
+  local key="$1" value="$2" kept rc=0 sq="'\\''"
+  _refuse_committable_env
   [[ -e "$ENV_FILE" ]] || (umask 077 && : > "$ENV_FILE")
-  tmp=$(mktemp)
-  grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
-  printf "%s='%s'\n" "$key" "${value//\'/$sq}" >> "$tmp"
-  cat "$tmp" > "$ENV_FILE"
-  rm -f "$tmp"
+  # A bash variable can't hold a NUL byte, so a UTF-16 file would come back mangled.
+  [[ $(tr -d '\000' < "$ENV_FILE" | wc -c) -eq $(wc -c < "$ENV_FILE") ]] ||
+    _abort "$ENV_FILE contains NUL bytes (UTF-16?). Re-save it as UTF-8, then re-run."
+  # LC_ALL=C and -a keep grep from calling odd bytes binary and printing a summary instead.
+  kept=$(LC_ALL=C grep -avE "^${key}=" "$ENV_FILE") || rc=$?
+  (( rc <= 1 )) || _abort "couldn't read $ENV_FILE, so nothing was written."
+  {
+    [[ -z "$kept" ]] || printf '%s\n' "$kept"
+    printf "%s='%s'\n" "$key" "${value//\'/$sq}"
+  } > "$ENV_FILE"
   printf -v "$key" '%s' "$value"
   WRITTEN_ENV+=("$key")
   printf '  %s✓ wrote%s %s → %s\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
